@@ -6,7 +6,7 @@ from googlesearch import search
 
 # --- CONFIGURATION ---
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1458134397986406482/ncQJKY8zdbG3IYrczVMug8i-1P_OVMhSqIYq8giw7UVttj-Ch-2aaKFZIIGl7cNLfruF"
-CHECK_INTERVAL = 7200  # 2h en secondes
+CHECK_INTERVAL = 43200  # 12h en secondes
 
 class JobOffer:
     def __init__(self, title, link, location="N/C", source="Inconnue", status="active"):
