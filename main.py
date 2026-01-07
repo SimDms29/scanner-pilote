@@ -6,7 +6,7 @@ from googlesearch import search
 
 # --- CONFIGURATION ---
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1458134397986406482/ncQJKY8zdbG3IYrczVMug8i-1P_OVMhSqIYq8giw7UVttj-Ch-2aaKFZIIGl7cNLfruF"
-CHECK_INTERVAL = 7200 # 2h en secondes
+CHECK_INTERVAL = 7200  # 2h en secondes
 
 class JobOffer:
     def __init__(self, title, link, location="N/C", source="Inconnue", status="active"):
@@ -17,7 +17,6 @@ class JobOffer:
         self.status = status
 
 # --- SCANNERS ---
-
 def scan_clair_group():
     print("--- Scan de Clair Group ---")
     url = "https://www.clair-group.com/fr/recrutement/"
@@ -27,18 +26,34 @@ def scan_clair_group():
         r = requests.get(url, headers=headers, timeout=15)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'html.parser')
-            # On cherche les blocs d'offres (souvent dans des h3 ou des liens)
+            page_text = soup.get_text().lower()
+            
+            # D'abord chercher les offres actives
             for item in soup.find_all(['h3', 'a', 'div'], class_=['job', 'offer', 'title']):
                 text = item.get_text(strip=True).lower()
                 if any(k in text for k in ["pilote", "pnt", "commandant", "officier", "captain", "f/o"]):
                     link = item['href'] if item.name == 'a' and item.has_attr('href') else url
-                    if not link.startswith('http'): link = "https://www.clair-group.com" + link
+                    if not link.startswith('http'): 
+                        link = "https://www.clair-group.com" + link
                     found.append(JobOffer(text.capitalize(), link, "Guyancourt / Le Bourget", "Clair Group"))
+            
+            # Si aucune offre trouvée, chercher les balises/liens avec mots-clés
+            if not found:
+                for a in soup.find_all('a', href=True):
+                    text = a.get_text(strip=True).lower()
+                    if any(k in text for k in ["pilote", "pnt", "captain", "candidature"]):
+                        link = a['href']
+                        if not link.startswith('http'):
+                            link = "https://www.clair-group.com" + link
+                        found.append(JobOffer(text.capitalize(), link, "Guyancourt / Le Bourget", "Clair Group"))
+            
+            # Si toujours aucune offre ET message "complet" présent
+            if not found and any(k in page_text for k in ["effectifs complets", "pas de recrutement", "no vacancy"]):
+                return [JobOffer("Pas d'offre d'emploi à ce jour", url, "Le Bourget", "Clair Group", status="full")]
         
-        if not found:
-            # Si aucun job pilote n'est listé, on considère les effectifs complets
-            return [JobOffer("Pas d'offre d'emploi à ce jour", url, "Le Bourget", "Clair Group", status="full")]
-    except: pass
+    except Exception as e:
+        print(f"Erreur Clair Group: {e}")
+    
     return found
 
 def scan_jetfly():
@@ -58,33 +73,99 @@ def scan_jetfly():
                     ops_keywords = ["ground", "dispatch", "ops", "sales", "office", "accountant", "mechanic", "technician"]
                     if not any(ok in title_low for ok in ops_keywords):
                         found.append(JobOffer(title, f"https://jetfly.bamboohr.com/careers/{j.get('id')}", j.get('location', 'N/C'), "Jetfly"))
-    except: pass
+    except Exception as e:
+        print(f"Erreur Jetfly: {e}")
+    
     return found
-
-# [Les autres scanners : oyonnair, pan_european, chalair, pcc restent identiques]
 
 def scan_oyonnair():
     print("--- Scan de Oyonnair ---")
     url = "https://www.oyonnair.com/compagnie-aerienne/recrutement/"
+    found = []
     try:
         r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         if r.status_code == 200:
-            page_text = BeautifulSoup(r.text, 'html.parser').get_text().lower()
+            soup = BeautifulSoup(r.text, 'html.parser')
+            page_text = soup.get_text().lower()
+            
+            # IMPORTANT: Vérifier DIRECTEMENT si les effectifs sont complets
             if "effectifs sont complets" in page_text or "effectifs complets" in page_text:
                 return [JobOffer("Effectifs complets", url, "Lyon/Rennes", "Oyonnair", status="full")]
-    except: pass
-    return []
+            
+            # Sinon, chercher des offres actives réelles
+            # On cherche uniquement dans les titres h2/h3 ou les liens spécifiques
+            for elem in soup.find_all(['h2', 'h3', 'a']):
+                text = elem.get_text(strip=True).lower()
+                
+                # Exclure les phrases génériques de présentation
+                exclusions = ["régulièrement à la recherche", "rejoignez-nous", "recrutement", 
+                             "différents domaines", "tels que", "compagnie-aerienne"]
+                
+                # Chercher les offres pilotes réelles (titre court et précis)
+                if any(k in text for k in ["pilote", "pnt", "commandant", "capitaine", "captain"]):
+                    if not any(ex in text for ex in exclusions) and len(text) < 100:
+                        if elem.name == 'a' and elem.has_attr('href') and 'recrutement' not in elem['href']:
+                            link = elem['href']
+                            if not link.startswith('http'):
+                                link = "https://www.oyonnair.com" + link
+                            found.append(JobOffer(text.capitalize(), link, "Lyon/Rennes", "Oyonnair"))
+            
+            # Supprimer les doublons
+            seen = set()
+            unique_found = []
+            for job in found:
+                if job.title not in seen:
+                    seen.add(job.title)
+                    unique_found.append(job)
+            
+            return unique_found
+                
+    except Exception as e:
+        print(f"Erreur Oyonnair: {e}")
+    
+    return found
 
 def scan_pan_european():
     print("--- Scan de Pan Européenne ---")
-    url = "https://www.paneuropeenne.com/en/" 
+    url = "https://www.paneuropeenne.com/en/"
+    found = []
     try:
         r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         if r.status_code == 200:
-            if "no employment at the moment" in BeautifulSoup(r.text, 'html.parser').get_text().lower():
+            soup = BeautifulSoup(r.text, 'html.parser')
+            page_text = soup.get_text().lower()
+            
+            # Chercher les offres actives
+            for elem in soup.find_all(['h2', 'h3', 'h4', 'div', 'p', 'li', 'a']):
+                text = elem.get_text(strip=True).lower()
+                # Chercher les offres pilotes
+                if any(k in text for k in ["pilot", "captain", "first officer", "f/o", "pnt"]):
+                    # Éviter les phrases génériques
+                    if len(text) > 10 and len(text) < 200 and "no employment" not in text:
+                        link = url
+                        if elem.name == 'a' and elem.has_attr('href'):
+                            link = elem['href']
+                            if not link.startswith('http'):
+                                link = "https://www.paneuropeenne.com" + link
+                        found.append(JobOffer(text.capitalize(), link, "Chambéry", "Pan Européenne"))
+            
+            # Supprimer les doublons
+            seen = set()
+            unique_found = []
+            for job in found:
+                if job.title not in seen:
+                    seen.add(job.title)
+                    unique_found.append(job)
+            found = unique_found
+            
+            # Si aucune offre ET message "no employment" présent
+            if not found and "no employment at the moment" in page_text:
                 return [JobOffer("Effectifs complets", url, "Chambéry", "Pan Européenne", status="full")]
-    except: pass
-    return []
+                
+    except Exception as e:
+        print(f"Erreur Pan Européenne: {e}")
+    
+    return found
 
 def scan_chalair():
     print("--- Scan de Chalair ---")
@@ -93,13 +174,22 @@ def scan_chalair():
     try:
         r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         if r.status_code == 200:
-            for a in BeautifulSoup(r.text, 'html.parser').find_all('a', href=True):
-                if any(k in a.get_text().lower() or k in a['href'].lower() for k in ["candidature", "pnt", "pilote"]):
+            soup = BeautifulSoup(r.text, 'html.parser')
+            
+            # Chercher les offres d'emploi spécifiques
+            for a in soup.find_all('a', href=True):
+                text = a.get_text(strip=True).lower()
+                href_lower = a['href'].lower()
+                
+                if any(k in text or k in href_lower for k in ["candidature", "pnt", "pilote", "captain", "recrutement"]):
                     u = a['href'] if a['href'].startswith('http') else f"https://www.chalair.fr{a['href']}"
-                    if u not in seen:
-                        found.append(JobOffer("Candidature PNT", u, "France", "Chalair"))
+                    if u not in seen and len(text) > 5:
+                        found.append(JobOffer(text.capitalize() if text else "Candidature PNT", u, "France", "Chalair"))
                         seen.add(u)
-    except: pass
+                        
+    except Exception as e:
+        print(f"Erreur Chalair: {e}")
+    
     return found
 
 def scan_pcc():
@@ -108,22 +198,27 @@ def scan_pcc():
     found = []
     try:
         r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
-        for a in BeautifulSoup(r.text, 'html.parser').find_all('a', href=True):
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        for a in soup.find_all('a', href=True):
             t = a.get_text(strip=True)
             if any(k in t.lower() for k in ["first officer", "f/o", "pilot", "low hour"]):
-                trash = ["add pilot","training", "resume", "cv", "interview", "help", "post", "advertise", "payscale", "roadshows"]
+                trash = ["add pilot", "training", "resume", "cv", "interview", "help", "post", "advertise", "payscale", "roadshows"]
                 if not any(tr in t.lower() for tr in trash) and len(t) > 10:
-                    found.append(JobOffer(t, a['href'] if a['href'].startswith('http') else f"https://pilotcareercenter.com{a['href']}", "Europe", "PCC"))
-    except: pass
+                    link = a['href'] if a['href'].startswith('http') else f"https://pilotcareercenter.com{a['href']}"
+                    found.append(JobOffer(t, link, "Europe", "PCC"))
+                    
+    except Exception as e:
+        print(f"Erreur PCC: {e}")
+    
     return found
 
 # --- DISCORD ---
-
 def send_to_discord(jetfly, pcc, chalair, oyo, pan, clair):
     now = datetime.now()
     next_scan = now + timedelta(seconds=CHECK_INTERVAL)
     embeds = []
-
+    
     def add_section(title, jobs, color=15158332, custom_msg=None):
         if custom_msg:
             embeds.append({"title": title, "color": 0x95a5a6, "description": f"⏳ *{custom_msg}*"})
@@ -136,7 +231,7 @@ def send_to_discord(jetfly, pcc, chalair, oyo, pan, clair):
         else:
             fields = [{"name": f"✅ {j.title}", "value": f"[Accéder à l'offre]({j.link})", "inline": False} for j in jobs]
             embeds.append({"title": title, "color": color, "fields": fields[:25]})
-
+    
     add_section("🏢 OYONNAIR", oyo)
     add_section("🏢 PAN EUROPÉENNE", pan)
     add_section("🏢 CLAIR GROUP (AstonJet/Fly)", clair)
@@ -144,17 +239,23 @@ def send_to_discord(jetfly, pcc, chalair, oyo, pan, clair):
     add_section("🏢 CHALAIR", chalair)
     add_section("🏢 JETFLY", jetfly, color=3447003)
     add_section("🌍 PILOT CAREER CENTER", pcc, color=15105570)
-
+    
     payload = {
         "username": "Aero Job Monitor",
         "content": f"📝 **RAPPORT DE VEILLE AÉRONAUTIQUE DU {now.strftime('%d/%m/%Y à %H:%M')}**\n📅 *Prochaine actualisation prévue le : {next_scan.strftime('%d/%m/%Y à %H:%M')}*",
         "embeds": embeds[:10]
     }
-    requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        print("✅ Rapport envoyé sur Discord")
+    except Exception as e:
+        print(f"❌ Erreur lors de l'envoi Discord: {e}")
 
 if __name__ == "__main__":
     while True:
-        print(f"\n=== PROTOCOLE DE SCAN INITIALISÉ LE {datetime.now().strftime('%d/%m %H:%M')} ===")
+        print(f"\n=== PROTOCOLE DE SCAN INITIALISÉ LE {datetime.now().strftime('%d/%m/%Y %H:%M')} ===")
+        
         j = scan_jetfly()
         p = scan_pcc()
         c = scan_chalair()
@@ -163,5 +264,5 @@ if __name__ == "__main__":
         cl = scan_clair_group()
         
         send_to_discord(j, p, c, o, pan, cl)
-        print(f"Procédure terminée. Attente 24h.")
+        print(f"Procédure terminée. Attente de {CHECK_INTERVAL/3600}h.")
         time.sleep(CHECK_INTERVAL)
