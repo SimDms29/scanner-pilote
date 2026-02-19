@@ -125,6 +125,50 @@ def scan_oyonnair():
     
     return found
 
+def scan_netjets():
+    print("--- Scan de NetJets Europe ---")
+    url = "https://netjets.jobs.hr.cloud.sap/europe/search/?createNewAlert=false&q=pilot&locationsearch=&optionsFacetsDD_location=&optionsFacetsDD_department="
+    base_url = "https://netjets.jobs.hr.cloud.sap"
+    found = []
+    try:
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            
+            # Les offres sont dans un tableau, chaque ligne contient titre + location
+            rows = soup.find_all('tr')
+            for row in rows:
+                link_tag = row.find('a', href=True)
+                if not link_tag:
+                    continue
+                
+                title = link_tag.get_text(strip=True)
+                href = link_tag['href']
+                if not href.startswith('http'):
+                    href = base_url + href
+                
+                # Récupérer les cellules <td> pour extraire la localisation
+                cells = row.find_all('td')
+                location = "N/C"
+                if len(cells) >= 2:
+                    location = cells[1].get_text(strip=True)
+                
+                # Filtrer uniquement les postes pilotes
+                title_low = title.lower()
+                if any(k in title_low for k in ["pilot", "captain", "first officer", "second in command", "f/o", "pic", "sic"]):
+                    found.append(JobOffer(title, href, location, "NetJets Europe"))
+            
+            if not found:
+                # Vérifier si aucune offre disponible
+                page_text = soup.get_text().lower()
+                if "no results" in page_text or "0 result" in page_text:
+                    return [JobOffer("Aucune offre disponible actuellement", url, "Europe", "NetJets Europe", status="full")]
+                    
+    except Exception as e:
+        print(f"Erreur NetJets: {e}")
+    
+    return found
+
 def scan_pan_european():
     print("--- Scan de Pan Européenne ---")
     url = "https://www.paneuropeenne.com/en/"
@@ -214,7 +258,7 @@ def scan_pcc():
     return found
 
 # --- DISCORD ---
-def send_to_discord(jetfly, pcc, chalair, oyo, pan, clair):
+def send_to_discord(jetfly, pcc, chalair, oyo, pan, clair, netjets):
     now = datetime.now()
     next_scan = now + timedelta(seconds=CHECK_INTERVAL)
     embeds = []
@@ -239,6 +283,7 @@ def send_to_discord(jetfly, pcc, chalair, oyo, pan, clair):
     add_section("🏢 CHALAIR", chalair)
     add_section("🏢 JETFLY", jetfly, color=3447003)
     add_section("🌍 PILOT CAREER CENTER", pcc, color=15105570)
+    add_section("✈️ NETJETS EUROPE", netjets, color=1752220)
     
     payload = {
         "username": "Aero Job Monitor",
@@ -262,7 +307,8 @@ if __name__ == "__main__":
         o = scan_oyonnair()
         pan = scan_pan_european()
         cl = scan_clair_group()
+        nj = scan_netjets()
         
-        send_to_discord(j, p, c, o, pan, cl)
+        send_to_discord(j, p, c, o, pan, cl, nj)
         print(f"Procédure terminée. Attente de {CHECK_INTERVAL/3600}h.")
         time.sleep(CHECK_INTERVAL)
